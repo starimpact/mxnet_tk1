@@ -208,6 +208,14 @@ MXNET_DLL int MXNDArrayCreateEx(const mx_uint *shape,
                               int delay_alloc,
                               int dtype,
                               NDArrayHandle *out);
+
+//added by mzhang
+int MXNDArrayLoadFromBytes(const void* param_bytes, size_t param_size, 
+                  mx_uint *out_size,
+                  NDArrayHandle** out_arr,
+                  mx_uint *out_name_size,
+                  const char*** out_names);
+
 /*!
  * \brief create a NDArray handle that is loaded from raw bytes.
  * \param buf the head of the raw bytes
