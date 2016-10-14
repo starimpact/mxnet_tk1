@@ -85,7 +85,7 @@ class CuDNNConvolutionOp : public Operator {
                                 out_desc_,
                                 out.dptr_ + out_offset_ * g), CUDNN_STATUS_SUCCESS);
 #endif
-#if CUDNN_MAJOR == 3
+#if CUDNN_MAJOR == 3 || CUDNN_VERSION == 2000
         CHECK_EQ(cudnnAddTensor(s->dnn_handle_,
                                 CUDNN_ADD_SAME_C,
                                 &alpha,
@@ -106,94 +106,7 @@ class CuDNNConvolutionOp : public Operator {
                         const std::vector<OpReqType> &req,
                         const std::vector<TBlob> &in_grad,
                         const std::vector<TBlob> &aux_args) {
-    using namespace mshadow;
-    using namespace mshadow::expr;
-    size_t expected = param_.no_bias == 0 ? 3 : 2;
-    CHECK_EQ(out_grad.size(), 1);
-    CHECK(in_data.size() == expected && in_grad.size() == expected);
-    Stream<gpu> *s = ctx.get_stream<gpu>();
-    Tensor<gpu, 4, DType> grad = out_grad[conv::kOut].get<gpu, 4, DType>(s);
-    Tensor<gpu, 4, DType> wmat = in_data[conv::kWeight].get<gpu, 4, DType>(s);
-    Tensor<gpu, 4, DType> gwmat = in_grad[conv::kWeight].get<gpu, 4, DType>(s);
-    Tensor<gpu, 4, DType> data = in_data[conv::kData].get<gpu, 4, DType>(s);
-    Tensor<gpu, 4, DType> gdata = in_grad[conv::kData].get<gpu, 4, DType>(s);
-    Tensor<gpu, 1, DType> workspace =
-      ctx.requested[conv::kTempSpace].get_space_typed<gpu, 1, DType>(
-      mshadow::Shape1(backward_workspace_), s);
-    for (uint32_t g = 0; g < param_.num_group; ++g) {
-      typename DataType<DType>::ScaleType alpha = 1.0f;
-      typename DataType<DType>::ScaleType beta = 0.0f;
-      typename DataType<DType>::ScaleType beta_add = 1.0f;
-      if (!param_.no_bias) {
-        Tensor<gpu, 1, DType> gbias = in_grad[conv::kBias].get<gpu, 1, DType>(s);
-        CHECK_EQ(cudnnConvolutionBackwardBias(s->dnn_handle_,
-                                              &alpha,
-                                              out_desc_,
-                                              grad.dptr_ + out_offset_ * g,
-                                              req[conv::kBias] == kWriteTo ? &beta : &beta_add,
-                                              bias_desc_,
-                                              gbias.dptr_ + bias_offset_ * g),
-                 CUDNN_STATUS_SUCCESS);
-      }
-      #if CUDNN_MAJOR <= 4
-      CHECK_EQ(cudnnConvolutionBackwardFilter_v3(s->dnn_handle_,
-               &alpha,
-               in_desc_,
-               data.dptr_ + data_offset_ * g,
-               out_desc_,
-               grad.dptr_ + out_offset_ * g,
-               conv_desc_,
-               back_algo_w_,
-               workspace.dptr_,
-               backward_workspace_byte_,
-               req[conv::kWeight] == kWriteTo? &beta : &beta_add,
-               filter_desc_,
-               gwmat.dptr_ + weight_offset_ * g), CUDNN_STATUS_SUCCESS);
-      #elif CUDNN_MAJOR == 5
-      CHECK_EQ(cudnnConvolutionBackwardFilter(s->dnn_handle_,
-               &alpha,
-               in_desc_,
-               data.dptr_ + data_offset_ * g,
-               out_desc_,
-               grad.dptr_ + out_offset_ * g,
-               conv_desc_,
-               back_algo_w_,
-               workspace.dptr_,
-               backward_workspace_byte_,
-               req[conv::kWeight] == kWriteTo? &beta : &beta_add,
-               filter_desc_,
-               gwmat.dptr_ + weight_offset_ * g), CUDNN_STATUS_SUCCESS);
-      #endif
-      #if CUDNN_MAJOR <= 4
-      CHECK_EQ(cudnnConvolutionBackwardData_v3(s->dnn_handle_,
-               &alpha,
-               filter_desc_,
-               wmat.dptr_ + weight_offset_ * g,
-               out_desc_,
-               grad.dptr_ + out_offset_ * g,
-               conv_desc_,
-               back_algo_,
-               workspace.dptr_,
-               backward_workspace_byte_,
-               &beta,
-               in_desc_,
-               gdata.dptr_ + data_offset_ * g), CUDNN_STATUS_SUCCESS);
-      #elif CUDNN_MAJOR == 5
-      CHECK_EQ(cudnnConvolutionBackwardData(s->dnn_handle_,
-               &alpha,
-               filter_desc_,
-               wmat.dptr_ + weight_offset_ * g,
-               out_desc_,
-               grad.dptr_ + out_offset_ * g,
-               conv_desc_,
-               back_algo_,
-               workspace.dptr_,
-               backward_workspace_byte_,
-               &beta,
-               in_desc_,
-               gdata.dptr_ + data_offset_ * g), CUDNN_STATUS_SUCCESS);
-      #endif
-    }
+
   }
 
  private:
@@ -210,8 +123,6 @@ class CuDNNConvolutionOp : public Operator {
     if (!init_cudnn_) {
       init_cudnn_ = true;
       size_t workspace_byte = static_cast<size_t>(param_.workspace * sizeof(DType));
-      size_t back_size = 0;
-      size_t back_size_w = 0;
       Tensor<gpu, 4, DType> data = in_data[conv::kData].get<gpu, 4, DType>(s);
       Tensor<gpu, 4, DType> out = out_data[conv::kOut].get<gpu, 4, DType>(s);
       data_offset_ = data.shape_[1] / param_.num_group * data.shape_[2] * data.shape_[3];
@@ -287,37 +198,6 @@ class CuDNNConvolutionOp : public Operator {
                CUDNN_CONVOLUTION_FWD_SPECIFY_WORKSPACE_LIMIT,
                workspace_byte,
                &algo_), CUDNN_STATUS_SUCCESS);
-      CHECK_EQ(cudnnGetConvolutionBackwardFilterAlgorithm(s->dnn_handle_,
-               in_desc_,
-               out_desc_,
-               conv_desc_,
-               filter_desc_,
-               CUDNN_CONVOLUTION_BWD_FILTER_SPECIFY_WORKSPACE_LIMIT,
-               workspace_byte,
-               &back_algo_w_), CUDNN_STATUS_SUCCESS);
-      CHECK_EQ(cudnnGetConvolutionBackwardDataAlgorithm(s->dnn_handle_,
-               filter_desc_,
-               out_desc_,
-               conv_desc_,
-               in_desc_,
-               CUDNN_CONVOLUTION_BWD_DATA_SPECIFY_WORKSPACE_LIMIT,
-               workspace_byte,
-               &back_algo_), CUDNN_STATUS_SUCCESS);
-      CHECK_EQ(cudnnGetConvolutionBackwardDataWorkspaceSize(s->dnn_handle_,
-               filter_desc_,
-               out_desc_,
-               conv_desc_,
-               in_desc_,
-               back_algo_,
-               &back_size), CUDNN_STATUS_SUCCESS);
-      CHECK_EQ(cudnnGetConvolutionBackwardFilterWorkspaceSize(s->dnn_handle_,
-               in_desc_,
-               out_desc_,
-               conv_desc_,
-               filter_desc_,
-               back_algo_w_,
-               &back_size_w), CUDNN_STATUS_SUCCESS);
-      backward_workspace_byte_ = std::max(back_size, back_size_w);
       CHECK_EQ(cudnnGetConvolutionForwardWorkspaceSize(s->dnn_handle_,
                in_desc_,
                filter_desc_,
@@ -326,15 +206,12 @@ class CuDNNConvolutionOp : public Operator {
                algo_,
                &forward_workspace_byte_), CUDNN_STATUS_SUCCESS);
       forward_workspace_ = forward_workspace_byte_ / sizeof(DType) + 1;
-      backward_workspace_ = backward_workspace_byte_ / sizeof(DType) + 1;
     }
   }
 
   bool init_cudnn_;
   size_t forward_workspace_;
-  size_t backward_workspace_;
   size_t forward_workspace_byte_;
-  size_t backward_workspace_byte_;
   size_t data_offset_;
   size_t out_offset_;
   size_t weight_offset_;
@@ -346,8 +223,6 @@ class CuDNNConvolutionOp : public Operator {
   cudnnFilterDescriptor_t filter_desc_;
   cudnnConvolutionDescriptor_t conv_desc_;
   cudnnConvolutionFwdAlgo_t algo_;
-  cudnnConvolutionBwdDataAlgo_t back_algo_;
-  cudnnConvolutionBwdFilterAlgo_t back_algo_w_;
   #if CUDNN_MAJOR == 5
   cudnnTensorFormat_t format_;
   #endif

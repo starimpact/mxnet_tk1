@@ -31,7 +31,7 @@ DEBUG = 0
 ADD_LDFLAGS =
 
 # the additional compile flags you want to add
-ADD_CFLAGS =
+ADD_CFLAGS = -DMSHADOW_USE_SSE=0
 
 #---------------------------------------------
 # matrix computation libraries for CPU/GPU
@@ -66,7 +66,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S), Darwin)
 USE_BLAS = apple
 else
-USE_BLAS = openblas
+USE_BLAS = atlas
 endif
 
 # add path to intel library, you may need it for MKL, if you did not add the path
@@ -116,8 +116,8 @@ EXTRA_OPERATORS =
 # TORCH_PATH = $(HOME)/torch
 # MXNET_PLUGINS += plugin/torch/torch.mk
 
-WARPCTC_PATH = $(HOME)/warp-ctc
-MXNET_PLUGINS += plugin/warpctc/warpctc.mk
+#WARPCTC_PATH = $(HOME)/warp-ctc
+#MXNET_PLUGINS += plugin/warpctc/warpctc.mk
 
 # whether to use sframe integration. This requires build sframe
 # git@github.com:dato-code/SFrame.git
